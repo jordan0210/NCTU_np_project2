@@ -1,28 +1,114 @@
-#include "main.h"
+#include "np_simple.h"
 
 static regex reg("[|!][0-9]+");
 vector<Pipe> pipes;
+vector<User> Users;
 
-int main(){
-	init_shell();
+int main(int argc, char *argv[]){
+	if (argc != 2){
+		return 0;
+	}
 
+	unsigned short port = (unsigned short)atoi(argv[1]);
+
+	int msock = create_socket(port);
+	listen(msock, 1);
+
+	int ssock, client_pid;
+	while(ssock = accept_newUser(msock)){
+		switch(client_pid = fork()){
+			case 0:
+				dup2(ssock, STDIN_FILENO);
+				dup2(ssock, STDOUT_FILENO);
+				dup2(ssock, STDERR_FILENO);
+				close(msock);
+
+				setenv("PATH", "bin:.", 1);
+				//show_welcomeMsg();
+				//show_loginMsg(0);
+
+				np_shell();
+				break;
+			default:
+				close(ssock);
+				waitpid(client_pid, NULL, 0);
+				Users.clear();
+		}
+	}
+	return 0;
+}
+
+int create_socket(unsigned short port){
+	int msock;
+	if ((msock = socket(AF_INET, SOCK_STREAM, 0)) < 0){
+		cerr << "Socket create fail.\n";
+	}
+	struct sockaddr_in sin;
+
+	bzero((char *)&sin, sizeof(sin));
+	sin.sin_family = AF_INET;
+	sin.sin_addr.s_addr = INADDR_ANY;
+    sin.sin_port = htons(port);
+
+	if (bind(msock, (struct sockaddr *)&sin, sizeof(sin)) < 0){
+		cerr << "Socket bind fail.\n";
+	}
+	return msock;
+}
+
+int accept_newUser(int msock){
+	struct sockaddr_in sin;
+	unsigned int alen = sizeof(sin);
+	int ssock = accept(msock, (struct sockaddr *)&sin, &alen);
+
+	User newUser;
+	newUser.ssock = ssock;
+	newUser.address = inet_ntoa(sin.sin_addr);
+	newUser.address.insert(newUser.address.length(), ":");
+	newUser.address.insert(newUser.address.length(), to_string(htons(sin.sin_port)));
+	newUser.name = "";
+	newUser.ID = 0;
+	Users.push_back(newUser);
+
+	return ssock;
+}
+
+void show_welcomeMsg(){
+	cout << "***************************************\n";
+	cout << "** Welcome to the information server **\n";
+	cout << "***************************************" << endl;
+}
+
+void show_loginMsg(int UserIndex){
+	string UserName = Users[UserIndex].name;
+	if (UserName == ""){
+		UserName = "(no name)";
+	}
+	cout << "*** '" << UserName << "' entered from " << Users[UserIndex].address << endl;
+}
+
+void np_shell(){
 	string cmdLine;
 	vector<cmdBlock> cmdBlocks;
 	bool is_first_cmd = true;
-	
+
 	while (true) {
 		cout << "% ";
+		cout.flush();
 		getline(cin, cmdLine);
+		if (cmdLine[cmdLine.length()-1] == '\r'){
+			cmdLine = cmdLine.substr(0, cmdLine.length()-1);
+		}
 		if (cmdLine.length() == 0)
 			continue;
 		parsePipe(cmdLine, cmdBlocks);
 		is_first_cmd = true;
-		
+
 		while (!cmdBlocks.empty()){
 			parseCmd(cmdBlocks[0]);
-			
+
 			checkPipeType(cmdBlocks[0]);
-			
+
 			if (!is_first_cmd){
 				for (int i=0; i<pipes.size(); i++){
 					if (pipes[i].count == -1) {
@@ -40,24 +126,17 @@ int main(){
 					}
 				}
 			}
-			
+
 			exec_cmd(cmdBlocks[0]);
-			
+
 			cmdBlocks.erase(cmdBlocks.begin());
 			is_first_cmd = false;
 		}
-		
+
 		for (int i=0; i<pipes.size(); i++){
 			pipes[i].count--;
 		}
 	}
-
-	return 0;
-}
-
-// Getting start for a shell
-void init_shell(){
-	setenv("PATH", "bin:.", 1);
 }
 
 //parse input commandLine into commandBlocks
@@ -66,7 +145,7 @@ void parsePipe(string cmdLine, vector<cmdBlock> &cmdBlocks){
 	int end;
 	cmdBlock cmdBlock;
 	cmdLine += "| ";
-	
+
 	while ((end = cmdLine.find(' ', cmdLine.find_first_of("|!", front))) != -1){
 		//initial cmdBlock
 		cmdBlock.has_fd_in = false;
@@ -81,17 +160,17 @@ void parsePipe(string cmdLine, vector<cmdBlock> &cmdBlocks){
 		if (end == cmdLine.length()-1) cmdBlock.cmd = (cmdBlock.cmd).substr(0, (cmdBlock.cmd).length()-1);
 		while((cmdBlock.cmd)[(cmdBlock.cmd).length()-1] == ' ') cmdBlock.cmd = (cmdBlock.cmd).substr(0, (cmdBlock.cmd).length()-1);
 		cmdBlocks.push_back(cmdBlock);
-		
+
 		front = end + 1;
 	}
 }
 
-//parse inpur commandBlock into command and arguments 
+//parse inpur commandBlock into command and arguments
 void parseCmd(cmdBlock &cmdBlock){
 	int front = 0;
 	int end;
 	cmdBlock.cmd += " ";
-	
+
 	//read arguments
 	while ((end = (cmdBlock.cmd).find(" ", front)) != -1){
 		if (end == front) {
@@ -152,19 +231,20 @@ void exec_cmd(cmdBlock &cmdBlock){
 	char *argv[1000];
 	string cmd = cmdBlock.argv[0];
 	int child_pid;
-	
+
 	if (cmd == "printenv"){
 		if (getenv(cmdBlock.argv[1].data()) != NULL)
 			cout << getenv(cmdBlock.argv[1].data()) << endl;
 	} else if (cmd == "setenv"){
 		setenv(cmdBlock.argv[1].data(), cmdBlock.argv[2].data(), 1);
 	} else if (cmd == "exit" || cmd == "EOF") {
+		Users.clear();
 		exit(0);
 	} else {
 		int status;
 		while((child_pid = fork()) < 0){
 			while(waitpid(-1, &status, WNOHANG) > 0){
-				getReturnValue(status);
+
 			};
 		}
 		switch (child_pid){
@@ -226,7 +306,7 @@ void exec_cmd(cmdBlock &cmdBlock){
 
 void vec2arr(vector<string> &vec, char *arr[], int index){
 	for (int i=0; i<index; i++){
-		arr[i] = (char*)vec[i].data();	
+		arr[i] = (char*)vec[i].data();
 	}
 	arr[vec.size()] = NULL;
 }

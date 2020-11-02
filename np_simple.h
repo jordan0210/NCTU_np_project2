@@ -5,6 +5,11 @@
 #include <sys/wait.h>
 #include <fcntl.h>
 #include <regex>
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+//#include <iomanip>
 
 using namespace std;
 
@@ -21,7 +26,22 @@ typedef struct Pipe{
 	int fd[2];
 }Pipe;
 
-void init_shell();
+typedef struct User{
+	int ssock;
+	string address;
+	string name;
+	int ID;
+}User;
+
+int create_socket(unsigned short port);
+
+int accept_newUser(int msock);
+
+void show_welcomeMsg();
+
+void show_loginMsg(int UserIndex);
+
+void np_shell();
 
 void parsePipe(string cmdLine, vector<cmdBlock> &cmdBlocks);
 
