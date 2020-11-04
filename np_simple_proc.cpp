@@ -61,6 +61,11 @@ void init_UserData(int index){
 	Users[index].name = "";
 	Users[index].path = "bin:.";
 	Users[index].pipes.clear();
+	for (int i=0; i<UserPipes.size(); i++){
+		if (UserPipes[i].sourceID == index || UserPipes[i].targetID == index){
+			UserPipes.erase(UserPipes.begin()+i);
+		}
+	}
 }
 
 int create_socket(unsigned short port){
@@ -98,7 +103,7 @@ bool accept_newUser(int msock){
 			if ((ssock = accept(msock, (struct sockaddr *)&sin, &alen)) < 0){
 				return success;
 			}
-			cout << "accept success." << endl;
+			// cout << "accept success." << endl;
 			Users[i].hasUser = true;
 			Users[i].ssock = ssock;
 			Users[i].address = inet_ntoa(sin.sin_addr);
@@ -119,29 +124,21 @@ bool accept_newUser(int msock){
 
 void show_welcomeMsg(int ID){
 	string Msg = "";
-	Msg = Msg + "***************************************\n"
-		+  "** Welcome to the information server **\n"
-		+  "***************************************\n";
+	Msg = Msg + "****************************************\n"
+			  + "** Welcome to the information server. **\n"
+			  + "****************************************\n";
 	broadcast(NULL, &ID, Msg);
 }
 
 void show_loginMsg(int ID){
-	string UserName = Users[ID].name;
-	if (UserName == ""){
-		UserName = "(no name)";
-	}
-	string Msg = "*** User '" + UserName + "' entered from " + Users[ID].address + ". ***\n";
-	cout << Msg << endl;
+	string Msg = "*** User '" + getUserName(Users[ID].name) + "' entered from " + Users[ID].address + ". ***\n";
+	// cout << Msg << endl;
 	broadcast(NULL, NULL, Msg);
 }
 
 void show_logoutMsg(int ID){
-	string UserName = Users[ID].name;
-	if (UserName == ""){
-		UserName = "(no name)";
-	}
-	string Msg = "*** User '" + UserName + "' left. ***\n";
-	cout << Msg << endl;
+	string Msg = "*** User '" + getUserName(Users[ID].name) + "' left. ***\n";
+	// cout << Msg << endl;
 	broadcast(NULL, NULL, Msg);
 }
 
@@ -149,11 +146,7 @@ void who(){
 	string Msg = "<ID>\t<nickname>\t<IP:port>\t<indicate me>\n";
 	for (int i=0; i<30; i++){
 		if (Users[i].hasUser){
-			string UserName = Users[i].name;
-			if (UserName == ""){
-				UserName = "(no name)";
-			}
-			Msg += to_string(Users[i].ID + 1) + "\t" + UserName + "\t" + Users[i].address;
+			Msg += to_string(Users[i].ID + 1) + "\t" + getUserName(Users[i].name) + "\t" + Users[i].address;
 			if (Users[i].ID == servingID){
 				Msg += "\t<-me";
 			}
@@ -165,11 +158,7 @@ void who(){
 
 void tell(int targetID, string Msg){
 	if (Users[targetID].hasUser){
-		string UserName = Users[servingID].name;
-		if (UserName == ""){
-			UserName = "(no name)";
-		}
-		Msg = "*** " + UserName + " told you ***: " + Msg + "\n";
+		Msg = "*** " + getUserName(Users[servingID].name) + " told you ***: " + Msg + "\n";
 		broadcast(NULL, &targetID, Msg);
 	} else {
 		Msg = "*** Error: user #" + to_string(targetID + 1) + " does not exist yet. ***\n";
@@ -178,11 +167,7 @@ void tell(int targetID, string Msg){
 }
 
 void yell(string Msg){
-	string UserName = Users[servingID].name;
-	if (UserName == ""){
-		UserName = "(no name)";
-	}
-	Msg = "*** " + UserName + " yelled ***: " + Msg + "\n";
+	Msg = "*** " + getUserName(Users[servingID].name) + " yelled ***: " + Msg + "\n";
 	broadcast(NULL, NULL, Msg);
 }
 
@@ -212,12 +197,78 @@ void broadcast(int *sourceID, int *targetID, string origin_Msg){
 			}
 		}
 	} else {
-		if (Users[*targetID].hasUser){
-			write(Users[*targetID].ssock, Msg, sizeof(unit)*origin_Msg.length());
+		write(Users[*targetID].ssock, Msg, sizeof(unit)*origin_Msg.length());
+	}
+}
+
+//check and create user pipe, then set the fds in cmdBlock
+void handleUserPipe(cmdBlock &cmdBlock){
+	int index;
+
+	if (cmdBlock.has_userpipe_receive){
+		if (cmdBlock.receive_from_ID < 0 || cmdBlock.receive_from_ID > 29 || !Users[cmdBlock.receive_from_ID].hasUser){
+			string Msg = "*** Error: user #" + to_string(cmdBlock.receive_from_ID + 1) + " does not exist yet. ***\n";
+			broadcast(NULL, &servingID, Msg);
+			cmdBlock.has_fd_in = true;
+			cmdBlock.fd_in = FD_NULL;
 		} else {
-			write(Users[*sourceID].ssock, Msg, sizeof(unit)*origin_Msg.length());
+			if (checkUserPipeExist(index, cmdBlock.receive_from_ID, servingID)){
+				string Msg = "*** " + getUserName(Users[servingID].name) + " (#" + to_string(servingID + 1) + ") just received from "
+							+ getUserName(Users[cmdBlock.receive_from_ID].name) + " (#" + to_string(cmdBlock.receive_from_ID + 1) + ") by '" + cmdBlock.cmdLine + "' ***\n";
+				broadcast(NULL, NULL, Msg);
+				cmdBlock.has_fd_in = true;
+				cmdBlock.fd_in = UserPipes[index].fd[0];
+			} else {
+				string Msg = "*** Error: the pipe #" + to_string(cmdBlock.receive_from_ID + 1) + "->#" + to_string(servingID + 1) + " does not exist yet. ***\n";
+				broadcast(NULL, &servingID, Msg);
+				cmdBlock.has_fd_in = true;
+				cmdBlock.fd_in = FD_NULL;
+			}
 		}
 	}
+	if (cmdBlock.has_userpipe_send){
+		if (cmdBlock.send_to_ID < 0 || cmdBlock.send_to_ID > 29 || !Users[cmdBlock.send_to_ID].hasUser){
+			string Msg = "*** Error: user #" + to_string(cmdBlock.send_to_ID + 1) + " does not exist yet. ***\n";
+			broadcast(NULL, &servingID, Msg);
+			cmdBlock.has_fd_out = true;
+			cmdBlock.fd_out = FD_NULL;
+		} else {
+			if (checkUserPipeExist(index, servingID, cmdBlock.send_to_ID)){
+				string Msg = "*** Error: the pipe #" + to_string(servingID + 1) + "->#" + to_string(cmdBlock.send_to_ID + 1) + " already exists. ***\n";
+				broadcast(NULL, &servingID, Msg);
+				cmdBlock.has_fd_out = true;
+				cmdBlock.fd_out = FD_NULL;
+			} else {
+				string Msg = "*** " + getUserName(Users[servingID].name) + " (#" + to_string(servingID + 1) + ") just piped '" + cmdBlock.cmdLine + "' to "
+							+ getUserName(Users[cmdBlock.send_to_ID].name) + " (#" + to_string(cmdBlock.send_to_ID + 1) + ") ***\n";
+				broadcast(NULL, NULL, Msg);
+				UserPipe newUserPipe;
+				newUserPipe.sourceID = servingID;
+				newUserPipe.targetID = cmdBlock.send_to_ID;
+				pipe(newUserPipe.fd);
+				UserPipes.push_back(newUserPipe);
+				cmdBlock.has_fd_out = true;
+				cmdBlock.fd_out = newUserPipe.fd[1];
+			}
+		}
+	}
+}
+
+bool checkUserPipeExist(int &index, int sourceID, int targetID){
+	bool IsExist = false;
+	for (int i=0; i<UserPipes.size(); i++){
+		if (UserPipes[i].sourceID == sourceID && UserPipes[i].targetID == targetID){
+			index = i;
+			IsExist = true;
+			break;
+		}
+	}
+	return IsExist;
+}
+
+string getUserName(string UserName){
+	if (UserName == "") return "(no name)";
+	else return UserName;
 }
 
 void np_shell(int ID){
@@ -259,10 +310,14 @@ void np_shell(int ID){
 	}
 
 	parsePipe(cmdLine, cmdBlocks);
-
+	// cout << servingID << " : " << endl;
 	while (!cmdBlocks.empty()){
+		// cout << "start parse command." << endl;
 		parseCmd(cmdBlocks[0]);
+		// cout << "end parse command." << endl;
+		// cout << "start check Pipe Type." << endl;
 		checkPipeType(cmdBlocks[0]);
+		// cout << "end check Pipe Type." << endl;
 		if (!is_first_cmd){
 			for (int i=0; i<Users[servingID].pipes.size(); i++){
 				if (Users[servingID].pipes[i].count == -1) {
@@ -280,6 +335,17 @@ void np_shell(int ID){
 				}
 			}
 		}
+
+		//check and create user pipe, then set the fds in cmdBlock
+		// cout << "start handle User Pipe." << endl;
+		handleUserPipe(cmdBlocks[0]);
+		// cout << "end handle User Pipe." << endl;
+
+		// cout << cmdBlocks[0].cmd << " : " << endl;
+		// if (cmdBlocks[0].has_fd_in) cout << "fd_in:  " << cmdBlocks[0].fd_in << endl;
+		// else cout << "fd_in:  NULL" << endl;
+		// if (cmdBlocks[0].has_fd_out) cout << "fd_out: " << cmdBlocks[0].fd_out << endl;
+		// else cout << "fd_in:  NULL" << endl;
 
 		if (!exec_cmd(cmdBlocks[0])){
 			return;
@@ -311,8 +377,8 @@ void parsePipe(string cmdLine, vector<cmdBlock> &cmdBlocks){
 		cmdBlock.pipeType = 0;
 		cmdBlock.has_userpipe_send = false;
 		cmdBlock.has_userpipe_receive = false;
-		cmdBlock.sendID = 0;
-		cmdBlock.receiveID = 0;
+		cmdBlock.send_to_ID = 0;
+		cmdBlock.receive_from_ID = 0;
 
 		//parse cmdLine
 		cmdBlock.cmd = cmdLine.substr(front, end-front);
@@ -384,23 +450,30 @@ void checkPipeType(cmdBlock &cmdBlock){
 		cmdBlock.has_fd_out = true;
 	}
 
+	if (cmdBlock.argv.size() == 1){
+		return;
+	}
+
 	// handle userpipe
 	if (regex_match(last_argv, reg_userPipe_send)){	//User pipe ">" case
 		cmdBlock.has_userpipe_send = true;
-		cmdBlock.sendID = stoi(last_argv.substr(1));
+		cmdBlock.send_to_ID = stoi(last_argv.substr(1)) - 1;
 	} else if (regex_match(cmdBlock.argv[cmdBlock.argv.size()-2], reg_userPipe_send)){
 		cmdBlock.has_userpipe_send = true;
-		cmdBlock.sendID = stoi(cmdBlock.argv[cmdBlock.argv.size()-2].substr(1));
+		cmdBlock.send_to_ID = stoi(cmdBlock.argv[cmdBlock.argv.size()-2].substr(1)) - 1;
 	}
 	if (regex_match(last_argv, reg_userPipe_receive)){	//User pipe "<" case
 		cmdBlock.has_userpipe_receive = true;
-		cmdBlock.receiveID = stoi(last_argv.substr(1));
+		cmdBlock.receive_from_ID = stoi(last_argv.substr(1)) - 1;
 	} else if (regex_match(cmdBlock.argv[cmdBlock.argv.size()-2], reg_userPipe_receive)){
 		cmdBlock.has_userpipe_receive = true;
-		cmdBlock.receiveID = stoi(cmdBlock.argv[cmdBlock.argv.size()-2].substr(1));
+		cmdBlock.receive_from_ID = stoi(cmdBlock.argv[cmdBlock.argv.size()-2].substr(1)) - 1;
 	}
 	if (cmdBlock.has_userpipe_send){
-		cmdBock.argv.erase(cmdBock.argv.end());
+		cmdBlock.argv.erase(cmdBlock.argv.end());
+	}
+	if (cmdBlock.has_userpipe_receive){
+		cmdBlock.argv.erase(cmdBlock.argv.end());
 	}
 }
 
@@ -410,8 +483,10 @@ bool exec_cmd(cmdBlock &cmdBlock){
 	int child_pid;
 
 	if (cmd == "printenv"){
-		if (getenv(cmdBlock.argv[1].data()) != NULL)
-			cout << getenv(cmdBlock.argv[1].data()) << endl;
+		if (getenv(cmdBlock.argv[1].data()) != NULL){
+			string Msg = getenv(cmdBlock.argv[1].data());
+			broadcast(NULL, &servingID, Msg + "\n");
+		}
 	} else if (cmd == "setenv"){
 		Users[servingID].path = cmdBlock.argv[2];
 		setenv(cmdBlock.argv[1].data(), cmdBlock.argv[2].data(), 1);
@@ -436,7 +511,7 @@ bool exec_cmd(cmdBlock &cmdBlock){
 		while((child_pid = fork()) < 0){
 			while(waitpid(-1, &status, WNOHANG) > 0){
 
-			};
+			}
 		}
 		switch (child_pid){
 			case 0 :
@@ -446,9 +521,13 @@ bool exec_cmd(cmdBlock &cmdBlock){
 				if (cmdBlock.has_fd_out){
 					if (cmdBlock.pipeType == 1){
 						dup2(cmdBlock.fd_out, STDOUT_FILENO);
+						dup2(Users[servingID].ssock, STDERR_FILENO);
 					} else if (cmdBlock.pipeType == 2){
 						dup2(cmdBlock.fd_out, STDOUT_FILENO);
 						dup2(cmdBlock.fd_out, STDERR_FILENO);
+					} else {
+						dup2(cmdBlock.fd_out, STDOUT_FILENO);
+						dup2(Users[servingID].ssock, STDERR_FILENO);
 					}
 				} else {
 					dup2(Users[servingID].ssock, STDOUT_FILENO);
@@ -479,6 +558,7 @@ bool exec_cmd(cmdBlock &cmdBlock){
 					close(fd_redirection);
 					vec2arr(cmdBlock.argv, argv, index);
 				}
+
 				if (execvp(cmd.data(), argv) == -1)
 					cerr << "Unknown command: [" << cmd << "]." << endl;
 				exit(0);
@@ -490,6 +570,14 @@ bool exec_cmd(cmdBlock &cmdBlock){
 							close(Users[servingID].pipes[i].fd[0]);
 							close(Users[servingID].pipes[i].fd[1]);
 							Users[servingID].pipes.erase(Users[servingID].pipes.begin()+i);
+							break;
+						}
+					}
+					for (int i=0; i<UserPipes.size(); i++){
+						if (UserPipes[i].fd[0] == cmdBlock.fd_in){
+							close(UserPipes[i].fd[0]);
+							close(UserPipes[i].fd[1]);
+							UserPipes.erase(UserPipes.begin()+i);
 							break;
 						}
 					}

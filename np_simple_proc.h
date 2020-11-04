@@ -21,7 +21,7 @@ typedef struct cmdBlock{
 	int fd_in, fd_out;
 	int pipeType; //0: no pipe, 1: normal pipe, 2: error pipe
 	bool has_userpipe_send, has_userpipe_receive;
-	int sendID, receiveID;
+	int send_to_ID, receive_from_ID;
 }cmdBlock;
 
 typedef struct Pipe{
@@ -81,6 +81,15 @@ void name(string newName);
 //send the message to targetID
 //if there not exist targetID -> broadcast
 void broadcast(int *sourceID, int *targetID, string Msg);
+
+//check and create user pipe, then set the fds in cmdBlock
+void handleUserPipe(cmdBlock &cmdBlock);
+
+//check if the User pipe is exist
+bool checkUserPipeExist(int &index, int sourceID, int targetID);
+
+//return UserName (handle username == "")
+string getUserName(string UserName);
 
 //serve User with servingID
 void np_shell(int ID);
