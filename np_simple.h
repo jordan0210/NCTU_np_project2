@@ -26,20 +26,9 @@ typedef struct Pipe{
 	int fd[2];
 }Pipe;
 
-typedef struct User{
-	int ssock;
-	string address;
-	string name;
-	int ID;
-}User;
-
 int create_socket(unsigned short port);
 
 int accept_newUser(int msock);
-
-void show_welcomeMsg();
-
-void show_loginMsg(int UserIndex);
 
 void np_shell();
 

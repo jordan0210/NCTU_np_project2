@@ -2,7 +2,6 @@
 
 static regex reg("[|!][0-9]+");
 vector<Pipe> pipes;
-vector<User> Users;
 
 int main(int argc, char *argv[]){
 	if (argc != 2){
@@ -23,16 +22,11 @@ int main(int argc, char *argv[]){
 				dup2(ssock, STDERR_FILENO);
 				close(msock);
 
-				setenv("PATH", "bin:.", 1);
-				//show_welcomeMsg();
-				//show_loginMsg(0);
-
 				np_shell();
 				break;
 			default:
 				close(ssock);
 				waitpid(client_pid, NULL, 0);
-				Users.clear();
 		}
 	}
 	return 0;
@@ -61,33 +55,12 @@ int accept_newUser(int msock){
 	unsigned int alen = sizeof(sin);
 	int ssock = accept(msock, (struct sockaddr *)&sin, &alen);
 
-	User newUser;
-	newUser.ssock = ssock;
-	newUser.address = inet_ntoa(sin.sin_addr);
-	newUser.address.insert(newUser.address.length(), ":");
-	newUser.address.insert(newUser.address.length(), to_string(htons(sin.sin_port)));
-	newUser.name = "";
-	newUser.ID = 0;
-	Users.push_back(newUser);
-
 	return ssock;
 }
 
-void show_welcomeMsg(){
-	cout << "***************************************\n";
-	cout << "** Welcome to the information server **\n";
-	cout << "***************************************" << endl;
-}
-
-void show_loginMsg(int UserIndex){
-	string UserName = Users[UserIndex].name;
-	if (UserName == ""){
-		UserName = "(no name)";
-	}
-	cout << "*** '" << UserName << "' entered from " << Users[UserIndex].address << endl;
-}
-
 void np_shell(){
+	setenv("PATH", "bin:.", 1);
+
 	string cmdLine;
 	vector<cmdBlock> cmdBlocks;
 	bool is_first_cmd = true;
@@ -183,7 +156,7 @@ void parseCmd(cmdBlock &cmdBlock){
 }
 
 //check the pipeType of the cmdBlock, and generate a new pipe. !! The fd_in in cmdBlock is not recorded.
-void checkPipeType(cmdBlock &cmdBlock){//, vector<Pipe> &pipes){
+void checkPipeType(cmdBlock &cmdBlock){
 	string last_argv = cmdBlock.argv.back();
 	Pipe newPipe;
 	newPipe.count = 0;
@@ -238,7 +211,6 @@ void exec_cmd(cmdBlock &cmdBlock){
 	} else if (cmd == "setenv"){
 		setenv(cmdBlock.argv[1].data(), cmdBlock.argv[2].data(), 1);
 	} else if (cmd == "exit" || cmd == "EOF") {
-		Users.clear();
 		exit(0);
 	} else {
 		int status;
