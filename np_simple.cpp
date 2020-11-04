@@ -15,6 +15,7 @@ int main(int argc, char *argv[]){
 
 	int ssock, client_pid;
 	while(ssock = accept_newUser(msock)){
+		setenv("PATH", "bin:.", 1);
 		switch(client_pid = fork()){
 			case 0:
 				dup2(ssock, STDIN_FILENO);

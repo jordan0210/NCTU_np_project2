@@ -1,11 +1,14 @@
 #include "np_simple_proc.h"
 
-static regex reg("[|!][0-9]+");
-
-vector<Pipe> pipes;
-User Users[30];
+static regex reg_numberPipe("[|!][0-9]+");
+static regex reg_userPipe_send("[>][0-9]+");
+static regex reg_userPipe_receive("[<][0-9]+");
 
 fd_set activefds, readfds, writefds;
+User Users[30];
+int servingID;
+vector<UserPipe> UserPipes;
+int FD_NULL;
 
 int main(int argc, char *argv[]){
 	if (argc != 2){
@@ -19,6 +22,9 @@ int main(int argc, char *argv[]){
 	FD_ZERO(&activefds);
 	FD_ZERO(&readfds);
 	FD_ZERO(&writefds);
+	servingID = 0;
+	UserPipes.clear();
+	FD_NULL = open("/dev/null", O_RDWR);
 
 	//create socket and start listen
 	unsigned short port = (unsigned short)atoi(argv[1]);
@@ -26,33 +32,21 @@ int main(int argc, char *argv[]){
 	int msock = create_socket(port);
 	listen(msock, 30);
 
-	int selected_ID;
 	struct timeval timeval = {0, 10};
-	accept_newUser(msock);
 	while(true){
 		bcopy(&activefds, &readfds, sizeof(readfds));
-		if (select(findMax(), &readfds, NULL, NULL, &timeval) < 0){
+		if (select(findMax(msock), &readfds, NULL, NULL, &timeval) < 0){
 			cerr << "select fail" << endl;
 		}
 
+		//accept
 		if (FD_ISSET(msock, &readfds)){
 			accept_newUser(msock);
 		}
 
+		//serve User
 		for (int i=0; i<30; i++){
-			// np_shell(i);
-			// if (Users[i].hasUser && Users[i].doneServe){
-
-			// }
-
-			if (FD_ISSET(Users[i].ssock, &readfds)){
-				selected_ID = Users[i].ID;
-				cout << selected_ID << " start reading." << endl;
-
-				int readCount = read(Users[selected_ID].ssock, buf, sizeof(buf));
-				write(Users[selected_ID].ssock, buf, readCount);
-				bzero(buf, sizeof(buf));
-			}
+			np_shell(i);
 		}
 	}
 	return 0;
@@ -60,12 +54,13 @@ int main(int argc, char *argv[]){
 
 void init_UserData(int index){
 	Users[index].hasUser = false;
-	Users[index].doneServe = true;
 	Users[index].ssock = 0;
 	Users[index].address = "";
+	Users[index].doneServe = true;
 	Users[index].ID = 0;
 	Users[index].name = "";
 	Users[index].path = "bin:.";
+	Users[index].pipes.clear();
 }
 
 int create_socket(unsigned short port){
@@ -124,10 +119,10 @@ bool accept_newUser(int msock){
 
 void show_welcomeMsg(int ID){
 	string Msg = "";
-	Msg += "***************************************\n"
+	Msg = Msg + "***************************************\n"
 		+  "** Welcome to the information server **\n"
 		+  "***************************************\n";
-	tell(NULL, &ID, Msg);
+	broadcast(NULL, &ID, Msg);
 }
 
 void show_loginMsg(int ID){
@@ -135,18 +130,79 @@ void show_loginMsg(int ID){
 	if (UserName == ""){
 		UserName = "(no name)";
 	}
-	string Msg = "*** User'" + UserName + "' entered from " + Users[ID].address + ". ***\n";
+	string Msg = "*** User '" + UserName + "' entered from " + Users[ID].address + ". ***\n";
 	cout << Msg << endl;
-	tell(NULL, NULL, Msg);
+	broadcast(NULL, NULL, Msg);
 }
 
 void show_logoutMsg(int ID){
-	string Msg = "*** User '" + Users[ID].name + "' left. ***\n";
+	string UserName = Users[ID].name;
+	if (UserName == ""){
+		UserName = "(no name)";
+	}
+	string Msg = "*** User '" + UserName + "' left. ***\n";
 	cout << Msg << endl;
-	tell(NULL, NULL, Msg);
+	broadcast(NULL, NULL, Msg);
 }
 
-void tell(int *sourceID, int *targetID, string origin_Msg){
+void who(){
+	string Msg = "<ID>\t<nickname>\t<IP:port>\t<indicate me>\n";
+	for (int i=0; i<30; i++){
+		if (Users[i].hasUser){
+			string UserName = Users[i].name;
+			if (UserName == ""){
+				UserName = "(no name)";
+			}
+			Msg += to_string(Users[i].ID + 1) + "\t" + UserName + "\t" + Users[i].address;
+			if (Users[i].ID == servingID){
+				Msg += "\t<-me";
+			}
+			Msg += "\n";
+		}
+	}
+	broadcast(NULL, &servingID, Msg);
+}
+
+void tell(int targetID, string Msg){
+	if (Users[targetID].hasUser){
+		string UserName = Users[servingID].name;
+		if (UserName == ""){
+			UserName = "(no name)";
+		}
+		Msg = "*** " + UserName + " told you ***: " + Msg + "\n";
+		broadcast(NULL, &targetID, Msg);
+	} else {
+		Msg = "*** Error: user #" + to_string(targetID + 1) + " does not exist yet. ***\n";
+		broadcast(NULL, &servingID, Msg);
+	}
+}
+
+void yell(string Msg){
+	string UserName = Users[servingID].name;
+	if (UserName == ""){
+		UserName = "(no name)";
+	}
+	Msg = "*** " + UserName + " yelled ***: " + Msg + "\n";
+	broadcast(NULL, NULL, Msg);
+}
+
+void name(string newName){
+	for (int i=0; i<30; i++){
+		if (i == servingID){
+			continue;
+		}
+		if (Users[i].hasUser && Users[i].name == newName){
+			string Msg = "*** User '" + newName + "' already exists. ***\n";
+			broadcast(NULL, &servingID, Msg);
+			return;
+		}
+	}
+	Users[servingID].name = newName;
+	string Msg = "*** User from " + Users[servingID].address + " is named '" + Users[servingID].name + "'. ***\n";
+	broadcast(NULL, NULL, Msg);
+}
+
+void broadcast(int *sourceID, int *targetID, string origin_Msg){
 	const char *Msg = origin_Msg.c_str();
 	char unit;
 	if (targetID == NULL){
@@ -164,80 +220,79 @@ void tell(int *sourceID, int *targetID, string origin_Msg){
 	}
 }
 
-// string readFromClient(int &ID){
-
-// }
-
-// void writeToClient(int &ID){
-
-// }
-
-void np_shell(int servingID){
+void np_shell(int ID){
+	servingID = ID;
 	if (!Users[servingID].hasUser){
 		return;
 	}
+	setenv("PATH", Users[servingID].path.data(), 1);
 
 	string cmdLine;
-	char *readbuf[15000];
+	char readbuf[15000];
 	vector<cmdBlock> cmdBlocks;
 	bool is_first_cmd = true;
 
 	if (Users[servingID].doneServe){
 		string Msg = "% ";
-		tell(NULL, &servingID, Msg);
+		broadcast(NULL, &servingID, Msg);
 		Users[servingID].doneServe = false;
 	}
 
+	//read cmdLine from serving User
 	if (FD_ISSET(Users[servingID].ssock, &readfds)){
 		bzero(readbuf, sizeof(readbuf));
-		int readCount = read(Users[selected_ID].ssock, readbuf, sizeof(readbuf));
+		int readCount = read(Users[servingID].ssock, readbuf, sizeof(readbuf));
 		if (readCount < 0){
-			cerr << selected_ID << ": read error." << endl;
+			cerr << servingID << ": read error." << endl;
 			return;
 		} else {
 			cmdLine = readbuf;
-			cout << cmdLine << endl;
-			write(Users[selected_ID].ssock, readbuf, readCount);
-			return;
+			if (cmdLine[cmdLine.length()-1] == '\n'){
+				cmdLine = cmdLine.substr(0, cmdLine.length()-1);
+				if (cmdLine[cmdLine.length()-1] == '\r'){
+					cmdLine = cmdLine.substr(0, cmdLine.length()-1);
+				}
+			}
 		}
 	} else {
 		return;
 	}
-	getline(cin, cmdLine);
-	if (cmdLine[cmdLine.length()-1] == '\r'){
-		cmdLine = cmdLine.substr(0, cmdLine.length()-1);
-	}
-	if (cmdLine.length() == 0)
-		continue;
+
 	parsePipe(cmdLine, cmdBlocks);
-	is_first_cmd = true;
-		while (!cmdBlocks.empty()){
+
+	while (!cmdBlocks.empty()){
 		parseCmd(cmdBlocks[0]);
-			checkPipeType(cmdBlocks[0]);
-			if (!is_first_cmd){
-			for (int i=0; i<pipes.size(); i++){
-				if (pipes[i].count == -1) {
-					cmdBlocks[0].fd_in = pipes[i].fd[0];
+		checkPipeType(cmdBlocks[0]);
+		if (!is_first_cmd){
+			for (int i=0; i<Users[servingID].pipes.size(); i++){
+				if (Users[servingID].pipes[i].count == -1) {
+					cmdBlocks[0].fd_in = Users[servingID].pipes[i].fd[0];
 					break;
 				}
 			}
 			cmdBlocks[0].has_fd_in = true;
 		} else {
-			for (int i=0; i<pipes.size(); i++){
-				if (pipes[i].count == 0){
-					cmdBlocks[0].fd_in = pipes[i].fd[0];
+			for (int i=0; i<Users[servingID].pipes.size(); i++){
+				if (Users[servingID].pipes[i].count == 0){
+					cmdBlocks[0].fd_in = Users[servingID].pipes[i].fd[0];
 					cmdBlocks[0].has_fd_in = true;
 					break;
 				}
 			}
 		}
-			exec_cmd(cmdBlocks[0]);
-			cmdBlocks.erase(cmdBlocks.begin());
+
+		if (!exec_cmd(cmdBlocks[0])){
+			return;
+		}
+		cmdBlocks.erase(cmdBlocks.begin());
 		is_first_cmd = false;
 	}
-		for (int i=0; i<pipes.size(); i++){
-		pipes[i].count--;
+
+	for (int i=0; i<Users[servingID].pipes.size(); i++){
+		Users[servingID].pipes[i].count--;
 	}
+
+	Users[servingID].doneServe = true;
 }
 
 void parsePipe(string cmdLine, vector<cmdBlock> &cmdBlocks){
@@ -248,11 +303,16 @@ void parsePipe(string cmdLine, vector<cmdBlock> &cmdBlocks){
 
 	while ((end = cmdLine.find(' ', cmdLine.find_first_of("|!", front))) != -1){
 		//initial cmdBlock
+		cmdBlock.cmdLine = cmdLine.substr(0, cmdLine.length()-2);
 		cmdBlock.has_fd_in = false;
 		cmdBlock.has_fd_out = false;
 		cmdBlock.fd_in = 0;
 		cmdBlock.fd_out = 0;
 		cmdBlock.pipeType = 0;
+		cmdBlock.has_userpipe_send = false;
+		cmdBlock.has_userpipe_receive = false;
+		cmdBlock.sendID = 0;
+		cmdBlock.receiveID = 0;
 
 		//parse cmdLine
 		cmdBlock.cmd = cmdLine.substr(front, end-front);
@@ -285,7 +345,7 @@ void checkPipeType(cmdBlock &cmdBlock){
 	string last_argv = cmdBlock.argv.back();
 	Pipe newPipe;
 	newPipe.count = 0;
-	if (regex_match(last_argv, reg)){    //number pipe case
+	if (regex_match(last_argv, reg_numberPipe)){    //number pipe case
 		if (last_argv[0] == '|'){
 			cmdBlock.pipeType = 1;
 		} else if (last_argv[0] == '!'){
@@ -293,9 +353,9 @@ void checkPipeType(cmdBlock &cmdBlock){
 		}
 		newPipe.count = stoi(last_argv.substr(1));
 		bool merge_numberpipe = false;
-		for (int i=0; i<pipes.size(); i++){
-			if (newPipe.count == pipes[i].count){
-				cmdBlock.fd_out = pipes[i].fd[1];
+		for (int i=0; i<Users[servingID].pipes.size(); i++){
+			if (newPipe.count == Users[servingID].pipes[i].count){
+				cmdBlock.fd_out = Users[servingID].pipes[i].fd[1];
 				merge_numberpipe = true;
 				break;
 			}
@@ -303,9 +363,9 @@ void checkPipeType(cmdBlock &cmdBlock){
 		if (!merge_numberpipe){
 			pipe(newPipe.fd);
 			cmdBlock.fd_out = newPipe.fd[1];
-			pipes.push_back(newPipe);
+			Users[servingID].pipes.push_back(newPipe);
 		}
-	} else {
+	}else {
 		if (last_argv == "|"){		     //normal pipe case
 			cmdBlock.pipeType = 1;
 		} else if (last_argv == "!"){    //error pipe case
@@ -317,15 +377,34 @@ void checkPipeType(cmdBlock &cmdBlock){
 			newPipe.count = -1;
 			pipe(newPipe.fd);
 			cmdBlock.fd_out = newPipe.fd[1];
-			pipes.push_back(newPipe);
+			Users[servingID].pipes.push_back(newPipe);
 		}
 	}
 	if (cmdBlock.pipeType != 0){
 		cmdBlock.has_fd_out = true;
 	}
+
+	// handle userpipe
+	if (regex_match(last_argv, reg_userPipe_send)){	//User pipe ">" case
+		cmdBlock.has_userpipe_send = true;
+		cmdBlock.sendID = stoi(last_argv.substr(1));
+	} else if (regex_match(cmdBlock.argv[cmdBlock.argv.size()-2], reg_userPipe_send)){
+		cmdBlock.has_userpipe_send = true;
+		cmdBlock.sendID = stoi(cmdBlock.argv[cmdBlock.argv.size()-2].substr(1));
+	}
+	if (regex_match(last_argv, reg_userPipe_receive)){	//User pipe "<" case
+		cmdBlock.has_userpipe_receive = true;
+		cmdBlock.receiveID = stoi(last_argv.substr(1));
+	} else if (regex_match(cmdBlock.argv[cmdBlock.argv.size()-2], reg_userPipe_receive)){
+		cmdBlock.has_userpipe_receive = true;
+		cmdBlock.receiveID = stoi(cmdBlock.argv[cmdBlock.argv.size()-2].substr(1));
+	}
+	if (cmdBlock.has_userpipe_send){
+		cmdBock.argv.erase(cmdBock.argv.end());
+	}
 }
 
-void exec_cmd(cmdBlock &cmdBlock){
+bool exec_cmd(cmdBlock &cmdBlock){
 	char *argv[1000];
 	string cmd = cmdBlock.argv[0];
 	int child_pid;
@@ -334,9 +413,24 @@ void exec_cmd(cmdBlock &cmdBlock){
 		if (getenv(cmdBlock.argv[1].data()) != NULL)
 			cout << getenv(cmdBlock.argv[1].data()) << endl;
 	} else if (cmd == "setenv"){
+		Users[servingID].path = cmdBlock.argv[2];
 		setenv(cmdBlock.argv[1].data(), cmdBlock.argv[2].data(), 1);
-	} else if (cmd == "exit" || cmd == "EOF") {
-		exit(0);
+	} else if (cmd == "who"){
+		who();
+	} else if (cmd == "tell"){
+		string Msg = cmdBlock.cmd.substr(cmdBlock.cmd.find(cmdBlock.argv[2]));
+		tell(stoi(cmdBlock.argv[1])-1, Msg);
+	} else if (cmd == "yell"){
+		string Msg = cmdBlock.cmd.substr(cmdBlock.cmd.find(cmdBlock.argv[1]));
+		yell(Msg);
+	} else if (cmd == "name"){
+		name(cmdBlock.argv[1]);
+	} else if (cmd == "exit" || cmd == "EOF"){
+		show_logoutMsg(servingID);
+		FD_CLR(Users[servingID].ssock, &activefds);
+		close(Users[servingID].ssock);
+		init_UserData(servingID);
+		return false;
 	} else {
 		int status;
 		while((child_pid = fork()) < 0){
@@ -356,11 +450,19 @@ void exec_cmd(cmdBlock &cmdBlock){
 						dup2(cmdBlock.fd_out, STDOUT_FILENO);
 						dup2(cmdBlock.fd_out, STDERR_FILENO);
 					}
+				} else {
+					dup2(Users[servingID].ssock, STDOUT_FILENO);
+					dup2(Users[servingID].ssock, STDERR_FILENO);
 				}
+
 				//child closes all pipe fds
-				for (int i=0; i<pipes.size(); i++){
-					close(pipes[i].fd[0]);
-					close(pipes[i].fd[1]);
+				for (int i=0; i<Users[servingID].pipes.size(); i++){
+					close(Users[servingID].pipes[i].fd[0]);
+					close(Users[servingID].pipes[i].fd[1]);
+				}
+				for (int i=0; i<UserPipes.size(); i++){
+					close(UserPipes[i].fd[0]);
+					close(UserPipes[i].fd[1]);
 				}
 
 				// file redirection
@@ -383,11 +485,11 @@ void exec_cmd(cmdBlock &cmdBlock){
 			default :
 				//parent close useless pipe fd
 				if (cmdBlock.has_fd_in){
-					for (int i=0; i<pipes.size(); i++){
-						if (pipes[i].fd[0] == cmdBlock.fd_in){
-							close(pipes[i].fd[0]);
-							close(pipes[i].fd[1]);
-							pipes.erase(pipes.begin()+i);
+					for (int i=0; i<Users[servingID].pipes.size(); i++){
+						if (Users[servingID].pipes[i].fd[0] == cmdBlock.fd_in){
+							close(Users[servingID].pipes[i].fd[0]);
+							close(Users[servingID].pipes[i].fd[1]);
+							Users[servingID].pipes.erase(Users[servingID].pipes.begin()+i);
 							break;
 						}
 					}
@@ -399,6 +501,7 @@ void exec_cmd(cmdBlock &cmdBlock){
 				}
 		}
 	}
+	return true;
 }
 
 void vec2arr(vector<string> &vec, char *arr[], int index){
@@ -421,8 +524,8 @@ int findIndex(vector<string> &vec, string str){
 	return index;
 }
 
-int findMax(){
-	int maxValue = 1;
+int findMax(int msock){
+	int maxValue = msock;
 	for (int i=0; i<30; i++){
 		if (Users[i].ssock > maxValue){
 			maxValue = Users[i].ssock;
