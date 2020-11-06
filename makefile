@@ -1,6 +1,7 @@
 all:
-	#g++ np_simple.cpp np_simple.h -o np_simple
-	g++ np_simple_proc.cpp np_simple_proc.h -o np_simple_proc
+	g++ np_simple.cpp np_simple.h -o np_simple
+	g++ np_single_proc.cpp np_single_proc.h -o np_single_proc
 
 clean:
-	@rm npshell
+	@rm np_simple
+	@rm np_single_proc

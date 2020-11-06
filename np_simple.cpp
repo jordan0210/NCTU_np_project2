@@ -28,6 +28,7 @@ int main(int argc, char *argv[]){
 			default:
 				close(ssock);
 				waitpid(client_pid, NULL, 0);
+				while(waitpid(-1, NULL, WNOHANG) > 0){}
 		}
 	}
 	return 0;
@@ -37,6 +38,7 @@ int create_socket(unsigned short port){
 	int msock;
 	if ((msock = socket(AF_INET, SOCK_STREAM, 0)) < 0){
 		cerr << "Socket create fail.\n";
+		exit(0);
 	}
 	struct sockaddr_in sin;
 
@@ -47,6 +49,7 @@ int create_socket(unsigned short port){
 
 	if (bind(msock, (struct sockaddr *)&sin, sizeof(sin)) < 0){
 		cerr << "Socket bind fail.\n";
+		exit(0);
 	}
 	return msock;
 }
@@ -216,9 +219,7 @@ void exec_cmd(cmdBlock &cmdBlock){
 	} else {
 		int status;
 		while((child_pid = fork()) < 0){
-			while(waitpid(-1, &status, WNOHANG) > 0){
-
-			};
+			while(waitpid(-1, &status, WNOHANG) > 0){}
 		}
 		switch (child_pid){
 			case 0 :
